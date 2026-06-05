@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="股票追蹤"/>
+<title>股票持倉追蹤</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,sans-serif;background:#f2f2f7;color:#1c1c1e;min-height:100vh}
+.header{background:#fff;padding:16px;border-bottom:0.5px solid #e0e0e0;position:sticky;top:0;z-index:10}
+.header h1{font-size:18px;font-weight:600}
+.summary{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px}
+.metric{background:#fff;border-radius:12px;padding:12px;text-align:center}
+.metric-label{font-size:11px;color:#8e8e93;margin-bottom:4px}
+.metric-value{font-size:20px;font-weight:600}
+.pos{color:#34c759}.neg{color:#ff3b30}
+.section{padding:0 12px 12px}
+.section-title{font-size:13px;color:#8e8e93;padding:8px 4px}
+.add-card{background:#fff;border-radius:12px;padding:12px;margin-bottom:8px}
+.input-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px}
+input{width:100%;padding:8px;border:0.5px solid #e0e0e0;border-radius:8px;font-size:14px;background:#f9f9f9}
+.btn{width:100%;padding:10px;border:none;border-radius:8px;font-size:15px;font-weight:500;cursor:pointer}
+.btn-add{background:#007aff;color:#fff}
+.btn-refresh{background:#f2f2f7;color:#007aff;margin-top:8px}
+.holding{background:#fff;border-radius:12px;padding:12px;margin-bottom:8px}
+.holding-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.ticker-name{font-size:16px;font-weight:600}
+.stock-name{font-size:12px;color:#8e8e93}
+.delete-btn{background:none;border:none;color:#ff3b30;font-size:20px;cursor:pointer;padding:0 4px}
+.holding-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
+.holding-item{background:#f9f9f9;border-radius:8px;padding:6px 8px}
+.holding-item-label{font-size:10px;color:#8e8e93}
+.holding-item-value{font-size:13px;font-weight:500}
+.empty{text-align:center;color:#8e8e93;padding:2rem;font-size:14px}
+.loading{color:#8e8e93;font-size:13px}
+</style>
+</head>
+<body>
+<div class="header"><h1>📈 股票持倉追蹤</h1></div>
+<div class="summary">
+  <div class="metric"><div class="metric-label">投資成本</div><div class="metric-value" id="total-cost">—</div></div>
+  <div class="metric"><div class="metric-label">目前現值</div><div class="metric-value" id="total-val">—</div></div>
+  <div class="metric"><div class="metric-label">總損益</div><div class="metric-value" id="total-pnl">—</div></div>
+  <div class="metric"><div class="metric-label">報酬率</div><div class="metric-value" id="total-pct">—</div></div>
+</div>
+<div class="section">
+  <div class="section-title">新增持倉</div>
+  <div class="add-card">
+    <div class="input-row">
+      <input id="inp-ticker" placeholder="代號 2330" maxlength="6"/>
+      <input id="inp-shares" type="number" placeholder="股數"/>
+      <input id="inp-cost" type="number" placeholder="成本(元)"/>
+    </div>
+    <button class="btn btn-add" onclick="addPosition()">新增持倉</button>
+  </div>
+  <div class="section-title">持倉明細</div>
+  <button class="btn btn-refresh" onclick="refreshAll()">🔄 重新整理股價</button>
+  <div style="height:8px"></div>
+  <div id="holdings-list"><div class="empty">尚未新增任何持倉</div></div>
+</div>
+<script>
+let positions = JSON.parse(localStorage.getItem('tw_stocks') || '[]');
+const fmt = n => n==null?'—':Math.round(n).toLocaleString('zh-TW');
+const fmt2 = n => n==null?'—':n.toLocaleString('zh-TW',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+async function fetchPrice(ticker){
+  try{
+    const r = await fetch(`/api/stock?ticker=${ticker}`);
+    const d = await r.json();
+    return d;
+  }catch{return null;}
+}
+
+async function addPosition(){
+  const ticker = document.getElementById('inp-ticker').value.trim().replace(/\s/g,'');
+  const shares = parseFloat(document.getElementById('inp-shares').value);
+  const cost = parseFloat(document.getElementById('inp-cost').value);
+  if(!ticker||!shares||!cost){alert('請填寫所有欄位');return;}
+  if(positions.find(p=>p.ticker===ticker)){alert('此股票已存在');return;}
+  const pos = {ticker,shares,cost,price:null,name:'',loading:true};
+  positions.push(pos);
+  render();
+  const data = await fetchPrice(ticker);
+  pos.price = data?.price ?? null;
+  pos.name = data?.name ?? '';
+  pos.loading = false;
+  save();render();
+  document.getElementById('inp-ticker').value='';
+  document.getElementById('inp-shares').value='';
+  document.getElementById('inp-cost').value='';
+}
+
+function removePosition(i){if(confirm('確定刪除？')){positions.splice(i,1);save();render();}}
+
+async function refreshAll(){
+  positions.forEach(p=>p.loading=true);render();
+  await Promise.all(positions.map(async p=>{
+    const data = await fetchPrice(p.ticker);
+    p.price = data?.price ?? null;
+    p.name = data?.name ?? p.name;
+    p.loading = false;
+  }));
+  save();render();
+}
+
+function save(){localStorage.setItem('tw_stocks',JSON.stringify(positions));}
+
+function render(){
+  const list = document.getElementById('holdings-list');
+  if(positions.length===0){list.innerHTML='<div class="empty">尚未新增任何持倉</div>';updateSummary();return;}
+  list.innerHTML = positions.map((p,i)=>{
+    const costTotal = p.shares * p.cost;
+    const val = p.price!=null ? p.shares*p.price : null;
+    const pnl = val!=null ? val-costTotal : null;
+    const pct = pnl!=null ? (pnl/costTotal*100) : null;
+    const pnlStr = pnl==null?'—':(pnl>=0?'+':'')+fmt(pnl);
+    const pctStr = pct==null?'—':(pct>=0?'+':'')+pct.toFixed(2)+'%';
+    const cls = pnl==null?'':(pnl>=0?'pos':'neg');
+    return `<div class="holding">
+      <div class="holding-top">
+        <div><div class="ticker-name">${p.ticker}</div><div class="stock-name">${p.name||'—'}</div></div>
+        <button class="delete-btn" onclick="removePosition(${i})">×</button>
+      </div>
+      <div class="holding-grid">
+        <div class="holding-item"><div class="holding-item-label">現價</div><div class="holding-item-value">${p.loading?'<span class="loading">載入中</span>':fmt2(p.price)}</div></div>
+        <div class="holding-item"><div class="holding-item-label">現值</div><div class="holding-item-value">${fmt(val)}</div></div>
+        <div class="holding-item"><div class="holding-item-label">成本</div><div class="holding-item-value">${fmt(costTotal)}</div></div>
+        <div class="holding-item"><div class="holding-item-label">損益</div><div class="holding-item-value ${cls}">${pnlStr}</div></div>
+        <div class="holding-item"><div class="holding-item-label">報酬率</div><div class="holding-item-value ${cls}">${pctStr}</div></div>
+        <div class="holding-item"><div class="holding-item-label">股數</div><div class="holding-item-value">${fmt(p.shares)}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+  updateSummary();
+}
+
+function updateSummary(){
+  let tc=0,tv=0,has=false;
+  positions.forEach(p=>{tc+=p.shares*p.cost;if(p.price!=null){tv+=p.shares*p.price;has=true;}});
+  const pnl=has?tv-tc:null;
+  const pct=pnl!=null?(pnl/tc*100):null;
+  document.getElementById('total-cost').textContent=fmt(tc);
+  const ve=document.getElementById('total-val');ve.textContent=has?fmt(tv):'—';
+  const pe=document.getElementById('total-pnl');pe.textContent=pnl==null?'—':(pnl>=0?'+':'')+fmt(pnl);pe.className='metric-value '+(pnl==null?'':(pnl>=0?'pos':'neg'));
+  const pce=document.getElementById('total-pct');pce.textContent=pct==null?'—':(pct>=0?'+':'')+pct.toFixed(2)+'%';pce.className='metric-value '+(pct==null?'':(pct>=0?'pos':'neg'));
+}
+render();
+if(positions.length>0)refreshAll();
+</script>
+</body>
+</html>
